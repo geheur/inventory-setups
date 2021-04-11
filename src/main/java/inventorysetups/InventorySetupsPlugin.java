@@ -25,9 +25,16 @@
 package inventorysetups;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonDeserializationContext;
+import com.google.gson.JsonDeserializer;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonSerializationContext;
+import com.google.gson.JsonSerializer;
 import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import inventorysetups.ui.InventorySetupsPluginPanel;
@@ -99,6 +106,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
@@ -129,6 +137,8 @@ public class InventorySetupsPlugin extends Plugin
 	private static final String FILTER_ALL_ENTRY = "Filter all";
 	private static final String ADD_TO_ADDITIONAL_ENTRY = "Add to Additional Filtered Items";
 	private static final int SPELLBOOK_VARBIT = 4070;
+	public static final String BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY = "bankTagLayoutsPluginLayout";
+	public static final String BANK_TAG_LAYOUTS_ENABLED_KEY = "banktaglayoutsplugin";
 
 	@Inject
 	@Getter
@@ -1372,8 +1382,7 @@ public class InventorySetupsPlugin extends Plugin
 
 	public void exportSetup(final InventorySetup setup)
 	{
-		final Gson gson = new Gson();
-		final String json = gson.toJson(setup);
+		final String json = serializeSetup(setup);
 		final StringSelection contents = new StringSelection(json);
 		Toolkit.getDefaultToolkit().getSystemClipboard().setContents(contents, null);
 
@@ -1381,6 +1390,24 @@ public class InventorySetupsPlugin extends Plugin
 				"Setup data was copied to clipboard.",
 				"Export Setup Succeeded",
 				JOptionPane.PLAIN_MESSAGE);
+	}
+
+	public String serializeSetup(InventorySetup setup)
+	{
+		final Gson gson = new Gson();
+
+		JsonElement jsonElement = gson.toJsonTree(setup);
+
+		// Include Bank Tag Layouts plugin's layout for the setup, if it exists. This information isn't included in the
+		// InventorySetup object directly because it is not used outside of exporting or importing the setup.
+		String layoutString = getBankTagLayoutsPluginLayout(setup.getName());
+		if (layoutString != null)
+		{
+			jsonElement.getAsJsonObject().addProperty(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY, layoutString);
+		}
+
+		final String json = gson.toJson(jsonElement);
+		return json;
 	}
 
 	public void importSetup()
@@ -1398,27 +1425,7 @@ public class InventorySetupsPlugin extends Plugin
 				return;
 			}
 
-			final Gson gson = new Gson();
-			Type type = new TypeToken<InventorySetup>()
-			{
-
-			}.getType();
-
-			final InventorySetup newSetup  = gson.fromJson(setup, type);
-			// override the ID with our own
-			newSetup.setId(nextInventorySetupId++); // TODO handle overflow of nextInventorySetupId?
-			clientThread.invokeLater(() ->
-			{
-				if (newSetup.getRune_pouch() == null && checkIfContainerContainsItem(ItemID.RUNE_POUCH, newSetup.getInventory()))
-				{
-					newSetup.updateRunePouch(getRunePouchData());
-				}
-				if (newSetup.getNotes() == null)
-				{
-					newSetup.updateNotes("");
-				}
-				addInventorySetupClientThread(newSetup);
-			});
+			importSetup(setup);
 		}
 		catch (Exception e)
 		{
@@ -1427,6 +1434,73 @@ public class InventorySetupsPlugin extends Plugin
 					"Import Setup Failed",
 					JOptionPane.ERROR_MESSAGE);
 		}
+	}
+
+	public void importSetup(String setup)
+	{
+		final Gson gson = new Gson();
+		Type type = new TypeToken<InventorySetup>()
+		{
+
+		}.getType();
+
+		JsonObject jsonObject = gson.fromJson(setup, JsonObject.class);
+
+		// Check for Bank Tag Layouts plugin's layout for the setup. This information isn't included in the
+		// InventorySetup object directly because it is not used outside of exporting or importing the setup.
+		String bankTagLayoutsPluginLayout = null;
+		JsonElement bankTagLayoutsPluginLayoutElement = jsonObject.get(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY);
+		if (bankTagLayoutsPluginLayoutElement != null)
+		{
+			bankTagLayoutsPluginLayout = bankTagLayoutsPluginLayoutElement.getAsString();
+			System.out.println("layout is \"" + bankTagLayoutsPluginLayout + "\"");
+			jsonObject.remove(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY);
+		}
+
+		final InventorySetup newSetup  = gson.fromJson(jsonObject, type);
+
+		if (bankTagLayoutsPluginLayout != null) setBankTagLayoutsPluginLayout(newSetup.getName(), bankTagLayoutsPluginLayout);
+
+		// override the ID with our own
+		newSetup.setId(nextInventorySetupId++); // TODO handle overflow of nextInventorySetupId?
+		clientThread.invokeLater(() ->
+		{
+			if (newSetup.getRune_pouch() == null && checkIfContainerContainsItem(ItemID.RUNE_POUCH, newSetup.getInventory()))
+			{
+				newSetup.updateRunePouch(getRunePouchData());
+			}
+			if (newSetup.getNotes() == null)
+			{
+				newSetup.updateNotes("");
+			}
+			addInventorySetupClientThread(newSetup);
+		});
+	}
+
+	public static final String BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP = "banktaglayouts";
+	public static final String BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX = "inventory_setups_layout_";
+
+	private String getBankTagLayoutsPluginLayout(String inventorySetupName)
+	{
+		boolean bankTagLayoutsPluginEnabled = Boolean.parseBoolean(
+				configManager.getConfiguration("runelite", BANK_TAG_LAYOUTS_ENABLED_KEY)
+		);
+
+		return !bankTagLayoutsPluginEnabled ?
+				null :
+				configManager.getConfiguration(
+						BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP,
+						BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX + inventorySetupName
+				);
+	}
+
+	private void setBankTagLayoutsPluginLayout(String inventorySetupName, String layout)
+	{
+		configManager.setConfiguration(
+				BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP,
+				BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX + inventorySetupName,
+				layout
+		);
 	}
 
 	@Override

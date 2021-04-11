@@ -16,6 +16,7 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import com.google.inject.testing.fieldbinder.Bind;
+import org.mockito.stubbing.OngoingStubbing;
 
 import javax.inject.Inject;
 
@@ -100,5 +101,35 @@ public class InventorySetupsUnitTest
 										false,false, 0, 0L);
 
 		assertFalse(inventorySetupsPlugin.setupContainsItem(setup, ItemID.COAL));
+	}
+
+	@Test
+	public void testBankTagLayoutsSerialization()
+	{
+		InventorySetup setup = new InventorySetup();
+		String layout = "1:1,2:2,3:3";
+
+		enableBankTagLayoutsPlugin(true);
+		setBankTagLayoutToInventorySetup(setup, layout);
+		String exportedSetup = inventorySetupsPlugin.serializeSetup(setup);
+
+		setBankTagLayoutToInventorySetup(setup, null);
+
+		inventorySetupsPlugin.importSetup(exportedSetup);
+		String configuration = configManager.getConfiguration(InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP, InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX + setup.getName());
+		assertEquals(configuration, layout);
+	}
+
+	private void setBankTagLayoutToInventorySetup(InventorySetup example, String layout)
+	{
+		when(configManager.getConfiguration(
+				InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP,
+				InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX + example.getName()
+		)).thenReturn(layout);
+	}
+
+	private OngoingStubbing<String> enableBankTagLayoutsPlugin(boolean enable)
+	{
+		return when(configManager.getConfiguration("runelite", InventorySetupsPlugin.BANK_TAG_LAYOUTS_ENABLED_KEY)).thenReturn(enable ? "true" : null);
 	}
 }
