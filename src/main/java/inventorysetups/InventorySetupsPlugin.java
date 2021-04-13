@@ -25,22 +25,17 @@
 package inventorysetups;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
-import com.google.gson.JsonDeserializationContext;
-import com.google.gson.JsonDeserializer;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonPrimitive;
-import com.google.gson.JsonSerializationContext;
-import com.google.gson.JsonSerializer;
 import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import inventorysetups.ui.InventorySetupsPluginPanel;
 import inventorysetups.ui.InventorySetupsSlot;
 import joptsimple.internal.Strings;
+import lombok.Data;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
@@ -94,6 +89,7 @@ import net.runelite.client.util.HotkeyListener;
 import net.runelite.client.util.ImageUtil;
 
 
+import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -106,7 +102,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
@@ -137,7 +132,9 @@ public class InventorySetupsPlugin extends Plugin
 	private static final String FILTER_ALL_ENTRY = "Filter all";
 	private static final String ADD_TO_ADDITIONAL_ENTRY = "Add to Additional Filtered Items";
 	private static final int SPELLBOOK_VARBIT = 4070;
+	public static final String BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP = "banktaglayouts";
 	public static final String BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY = "bankTagLayoutsPluginLayout";
+	public static final String BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX = "inventory_setups_layout_";
 	public static final String BANK_TAG_LAYOUTS_ENABLED_KEY = "banktaglayoutsplugin";
 
 	@Inject
@@ -1382,7 +1379,7 @@ public class InventorySetupsPlugin extends Plugin
 
 	public void exportSetup(final InventorySetup setup)
 	{
-		final String json = serializeSetup(setup);
+		final String json = serializeSetupForExport(setup);
 		final StringSelection contents = new StringSelection(json);
 		Toolkit.getDefaultToolkit().getSystemClipboard().setContents(contents, null);
 
@@ -1392,7 +1389,12 @@ public class InventorySetupsPlugin extends Plugin
 				JOptionPane.PLAIN_MESSAGE);
 	}
 
-	public String serializeSetup(InventorySetup setup)
+	/**
+	 * Serializes the setup to JSON.
+	 *
+	 * If the Bank Tag Layouts plugin has a layout for the setup, includes that layout in the JSON.
+	 */
+	public String serializeSetupForExport(InventorySetup setup)
 	{
 		final Gson gson = new Gson();
 
@@ -1438,28 +1440,11 @@ public class InventorySetupsPlugin extends Plugin
 
 	public void importSetup(String setup)
 	{
-		final Gson gson = new Gson();
-		Type type = new TypeToken<InventorySetup>()
-		{
+		InventorySetupAndBankTagLayout setupLayout = deserializeImportedSetup(setup);
 
-		}.getType();
+		final InventorySetup newSetup = setupLayout.getSetup();
 
-		JsonObject jsonObject = gson.fromJson(setup, JsonObject.class);
-
-		// Check for Bank Tag Layouts plugin's layout for the setup. This information isn't included in the
-		// InventorySetup object directly because it is not used outside of exporting or importing the setup.
-		String bankTagLayoutsPluginLayout = null;
-		JsonElement bankTagLayoutsPluginLayoutElement = jsonObject.get(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY);
-		if (bankTagLayoutsPluginLayoutElement != null)
-		{
-			bankTagLayoutsPluginLayout = bankTagLayoutsPluginLayoutElement.getAsString();
-			System.out.println("layout is \"" + bankTagLayoutsPluginLayout + "\"");
-			jsonObject.remove(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY);
-		}
-
-		final InventorySetup newSetup  = gson.fromJson(jsonObject, type);
-
-		if (bankTagLayoutsPluginLayout != null) setBankTagLayoutsPluginLayout(newSetup.getName(), bankTagLayoutsPluginLayout);
+		if (setupLayout.getBankTagLayout() != null) setBankTagLayoutsPluginLayout(newSetup.getName(), setupLayout.getBankTagLayout());
 
 		// override the ID with our own
 		newSetup.setId(nextInventorySetupId++); // TODO handle overflow of nextInventorySetupId?
@@ -1477,8 +1462,42 @@ public class InventorySetupsPlugin extends Plugin
 		});
 	}
 
-	public static final String BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP = "banktaglayouts";
-	public static final String BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX = "inventory_setups_layout_";
+	@Data
+	public static class InventorySetupAndBankTagLayout {
+	    @NonNull
+		private final InventorySetup setup;
+	    @Nullable
+		private final String bankTagLayout;
+	}
+
+	/**
+	 * Converts the json string to an InventorySetup and, if included, a Bank Tag Layout string.
+	 */
+	public InventorySetupAndBankTagLayout deserializeImportedSetup(String setup)
+	{
+		final Gson gson = new Gson();
+
+		JsonObject jsonObject = gson.fromJson(setup, JsonObject.class);
+
+		// Check for Bank Tag Layouts plugin's layout for the setup. This information shouldn't be included in the
+		// InventorySetup object because it is not used outside of exporting or importing the setup.
+		String bankTagLayout = null;
+		JsonElement bankTagLayoutsPluginLayoutElement = jsonObject.get(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY);
+		if (bankTagLayoutsPluginLayoutElement != null)
+		{
+			bankTagLayout = bankTagLayoutsPluginLayoutElement.getAsString();
+			System.out.println("layout is \"" + bankTagLayout + "\"");
+			jsonObject.remove(BANK_TAG_LAYOUTS_PLUGIN_LAYOUT_JSON_KEY);
+		}
+
+		Type type = new TypeToken<InventorySetup>()
+		{
+
+		}.getType();
+		final InventorySetup newSetup  = gson.fromJson(jsonObject, type);
+
+		return new InventorySetupAndBankTagLayout(newSetup, bankTagLayout);
+	}
 
 	private String getBankTagLayoutsPluginLayout(String inventorySetupName)
 	{
@@ -1671,7 +1690,7 @@ public class InventorySetupsPlugin extends Plugin
 		}
 		else if (isItemRunePouch(oldItem.getId()))
 		{
-			// if the old item is a rune pouch, need to update it to null 
+			// if the old item is a rune pouch, need to update it to null
 			slot.getParentSetup().updateRunePouch(null);
 		}
 

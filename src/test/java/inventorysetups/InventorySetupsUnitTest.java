@@ -13,6 +13,7 @@ import net.runelite.client.game.ItemManager;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import com.google.inject.testing.fieldbinder.Bind;
@@ -23,6 +24,9 @@ import javax.inject.Inject;
 import java.util.ArrayList;
 import java.util.HashMap;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import static org.junit.Assert.assertEquals;
@@ -106,21 +110,62 @@ public class InventorySetupsUnitTest
 	@Test
 	public void testBankTagLayoutsSerialization()
 	{
-		InventorySetup setup = new InventorySetup();
+		InventorySetup setup = new InventorySetup(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new HashMap<>(), "testname", "", null, false, false, false, 1, 1);
 		String layout = "1:1,2:2,3:3";
 
 		enableBankTagLayoutsPlugin(true);
-		setBankTagLayoutToInventorySetup(setup, layout);
-		String exportedSetup = inventorySetupsPlugin.serializeSetup(setup);
+		setBankTagLayout(setup, layout);
+		String exportedSetup = inventorySetupsPlugin.serializeSetupForExport(setup);
 
-		setBankTagLayoutToInventorySetup(setup, null);
+		setBankTagLayout(setup, null);
+
+		// Check if the deserialization works.
+		InventorySetupsPlugin.InventorySetupAndBankTagLayout inventorySetupAndBankTagLayout = inventorySetupsPlugin.deserializeImportedSetup(exportedSetup);
+		assertEquals(layout, inventorySetupAndBankTagLayout.getBankTagLayout());
+//		assertEquals(setup, inventorySetupAndBankTagLayout.getSetup());
+
+		// Check to see if the config value is set.
+		inventorySetupsPlugin.importSetup(exportedSetup);
+		ArgumentCaptor<String> argument = ArgumentCaptor.forClass(String.class);
+		verify(configManager).setConfiguration(
+				eq(InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP),
+				eq(InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX + setup.getName()),
+				argument.capture()
+		);
+		assertEquals(layout, argument.getValue());
+	}
+
+	@Test
+	public void testThatBankTagLayoutIsOptional()
+	{
+		InventorySetup setup = new InventorySetup(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new HashMap<>(), "testname", "", null, false, false, false, 1, 1);
+
+		String exportedSetup = inventorySetupsPlugin.serializeSetupForExport(setup);
+
+		System.out.println("exported: \"" + exportedSetup + "\"");
+		InventorySetupsPlugin.InventorySetupAndBankTagLayout inventorySetupAndBankTagLayout = inventorySetupsPlugin.deserializeImportedSetup(exportedSetup);
+		assertEquals(null, inventorySetupAndBankTagLayout.getBankTagLayout());
+//		assertEquals(setup, inventorySetupAndBankTagLayout.getSetup());
 
 		inventorySetupsPlugin.importSetup(exportedSetup);
 		String configuration = configManager.getConfiguration(InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP, InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_INVENTORY_SETUPS_LAYOUT_CONFIG_KEY_PREFIX + setup.getName());
-		assertEquals(configuration, layout);
+		assertEquals(null, configuration);
 	}
 
-	private void setBankTagLayoutToInventorySetup(InventorySetup example, String layout)
+	/**
+	 * This just tests that json fields that are not in InventorySetup are ignored during deserialization. Only relevant
+	 * during the transition period where someone might still be using an old version of Inventory Setups that can't
+	 * handle the layout string.
+	 */
+	@Test
+	public void testThatBankTagLayoutWontBreakOnOldVersions()
+	{
+//		InventorySetup setup = new InventorySetup(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), new HashMap<>(), "testname", "", null, null, false, false, false, 1, 1);
+//		InventorySetup imported = inventorySetupsPlugin.deserializeSetup(exportedSetup);
+//		assertEquals(imported, setup);
+	}
+
+	private void setBankTagLayout(InventorySetup example, String layout)
 	{
 		when(configManager.getConfiguration(
 				InventorySetupsPlugin.BANK_TAG_LAYOUTS_PLUGIN_CONFIG_GROUP,
